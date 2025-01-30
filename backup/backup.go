@@ -111,6 +111,9 @@ type Curator struct {
 	client   *http.Client
 }
 
+var ErrBackupNotFound = errors.New("backup not found")
+var ErrCuratorUnavailable = errors.New("curator return internal server error")
+
 type BackupProvider struct {
 	client     common.Client
 	indexNames *common.IndexAdapter
@@ -156,7 +159,12 @@ func (bp BackupProvider) CollectBackupHandler() func(w http.ResponseWriter, r *h
 			_, _ = w.Write([]byte(err.Error()))
 			return
 		}
-		defer r.Body.Close()
+		defer func(Body io.ReadCloser) {
+			err = Body.Close()
+			if err != nil {
+				logger.ErrorContext(ctx, "failed to close http response body", slog.Any("error", err.Error()))
+			}
+		}(r.Body)
 
 		backupID, err := bp.CollectBackup(databases, ctx)
 		if err != nil {
@@ -165,7 +173,18 @@ func (bp BackupProvider) CollectBackupHandler() func(w http.ResponseWriter, r *h
 			_, _ = w.Write([]byte(err.Error()))
 			return
 		}
-		response := bp.TrackBackup(backupID, ctx)
+
+		response, err := bp.TrackBackup(backupID, ctx)
+		if err != nil {
+			if errors.Is(err, ErrBackupNotFound) {
+				w.WriteHeader(http.StatusNotFound)
+				_, err = w.Write([]byte(err.Error()))
+				if err != nil {
+					logger.ErrorContext(ctx, "failed to write bytes to writer output channel", slog.String("error", err.Error()))
+				}
+				return
+			}
+		}
 		responseBody, err := json.Marshal(response)
 		if err != nil {
 			logger.ErrorContext(ctx, "Failed to marshal response to JSON", slog.Any("error", err))
@@ -205,7 +224,18 @@ func (bp BackupProvider) TrackBackupHandler() func(w http.ResponseWriter, r *htt
 		logger.InfoContext(ctx, fmt.Sprintf("Request to track backup in '%s' is received", r.URL.Path))
 		vars := mux.Vars(r)
 		trackID := vars["backupID"]
-		response := bp.TrackBackup(trackID, ctx)
+		response, err := bp.TrackBackup(trackID, ctx)
+		if err != nil {
+			if errors.Is(err, ErrBackupNotFound) {
+				w.WriteHeader(http.StatusNotFound)
+				_, err = w.Write([]byte(err.Error()))
+				if err != nil {
+					logger.ErrorContext(ctx, "failed to write bytes to writer output channel", slog.String("error", err.Error()))
+				}
+				return
+			}
+		}
+
 		responseBody, err := json.Marshal(response)
 		if err != nil {
 			logger.ErrorContext(ctx, "Failed to marshal response to JSON", slog.Any("error", err))
@@ -386,16 +416,16 @@ func (bp BackupProvider) CollectBackup(dbs []string, ctx context.Context) (strin
 	return string(responseBody), nil
 }
 
-func (bp BackupProvider) TrackBackup(backupID string, ctx context.Context) ActionTrack {
+func (bp BackupProvider) TrackBackup(backupID string, ctx context.Context) (ActionTrack, error) {
 	logger.DebugContext(ctx, fmt.Sprintf("Request to track '%s' backup is requested",
 		backupID))
 	jobStatus, err := bp.getJobStatus(backupID, ctx)
 	if err != nil {
 		logger.ErrorContext(ctx, "Failed to find snapshot", slog.Any("error", err))
-		return backupTrack(backupID, "FAIL")
+		return backupTrack(backupID, "FAIL"), err
 	}
 	logger.DebugContext(ctx, fmt.Sprintf("'%s' backup status is %s", backupID, jobStatus))
-	return backupTrack(backupID, jobStatus)
+	return backupTrack(backupID, jobStatus), nil
 }
 
 func (bp BackupProvider) DeleteBackup(backupID string, ctx context.Context) *http.Response {
@@ -691,7 +721,7 @@ func (bp BackupProvider) prepareRestoreRequest(ctx context.Context, url string, 
 
 func (bp BackupProvider) getJobStatus(snapshotName string, ctx context.Context) (string, error) {
 	url := fmt.Sprintf("%s/%s/%s", bp.Curator.url, "jobstatus", snapshotName)
-	request, err := http.NewRequest(http.MethodGet, url, nil)
+	request, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
 	if err != nil {
 		logger.ErrorContext(ctx, "Failed to prepare request to track backup", slog.Any("error", err))
 		return "FAIL", err
@@ -703,13 +733,25 @@ func (bp BackupProvider) getJobStatus(snapshotName string, ctx context.Context) 
 		logger.ErrorContext(ctx, "Failed to process request by curator", slog.Any("error", err))
 		return "FAIL", err
 	}
-	defer response.Body.Close()
+
+	defer func(Body io.ReadCloser) {
+		err = Body.Close()
+		if err != nil {
+			logger.ErrorContext(ctx, "Failed to properly close the response body ")
+		}
+	}(response.Body)
+
+	if response.StatusCode == 404 {
+		return "FAIL", ErrBackupNotFound
+	}
+
 	var jobStatus JobStatus
 	err = json.NewDecoder(response.Body).Decode(&jobStatus)
 	if err != nil {
 		logger.ErrorContext(ctx, "Failed to decode response from JSON", slog.Any("error", err))
-		return "FAIL", err
+		return "FAIL", fmt.Errorf("failed to decode response from JSON: %w", err)
 	}
+
 	var status string
 	switch state := jobStatus.State; state {
 	case "Failed":
