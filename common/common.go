@@ -55,6 +55,8 @@ const (
 	RequestIdKey       = "X-Request-Id"
 )
 
+type CorrelationID string
+
 var logger = GetLogger()
 var BasePath = GetBasePath()
 var resourcePrefixAttributeName = "resource_prefix"
@@ -135,7 +137,7 @@ func (h *CustomLogHandler) Handle(ctx context.Context, record slog.Record) error
 }
 
 func DoRequest(request opensearchapi.Request, client Client, result interface{}, ctx context.Context) error {
-	response, err := request.Do(context.Background(), client)
+	response, err := request.Do(ctx, client)
 	if err != nil {
 		return err
 	}
@@ -154,6 +156,17 @@ func ProcessBody(body io.ReadCloser, result interface{}) error {
 	}
 	logger.Debug(fmt.Sprintf("Response body is %s", readBody))
 	return json.Unmarshal(readBody, result)
+}
+
+func ProcessResponseBody(ctx context.Context, w http.ResponseWriter, responseBody []byte, status int) {
+	if status > 0 {
+		w.WriteHeader(status)
+	}
+
+	_, err := w.Write(responseBody)
+	if err != nil {
+		logger.ErrorContext(ctx, "failed to write bytes to http response", slog.String("error", err.Error()))
+	}
 }
 
 func GenerateUUID() string {
@@ -207,7 +220,7 @@ func GetUUID() string {
 }
 
 func PrepareContext(r *http.Request) context.Context {
-	requestId := r.Header.Get(RequestIdKey)
+	requestId := r.Header.Get(string(RequestIdKey))
 	if requestId == "" {
 		return context.WithValue(r.Context(), RequestIdKey, GenerateUUID())
 	}

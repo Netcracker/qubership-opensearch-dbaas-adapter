@@ -83,7 +83,7 @@ func Handlers(adapter common.Component) http.Handler {
 	opensearch := cluster.NewOpensearch(opensearchHost, opensearchPort,
 		opensearchProtocol, opensearchUsername, opensearchPassword)
 	baseProvider := basic.NewBaseProvider(opensearch)
-	baseProvider.EnsureAggregationIndex()
+	baseProvider.EnsureAggregationIndex(ctx)
 	registrationProvider := startRegistration(adapter.Address, adapter.Credentials.Username,
 		adapter.Credentials.Password, baseProvider)
 	createBasicRoles(baseProvider)

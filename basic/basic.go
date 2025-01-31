@@ -103,28 +103,26 @@ func (bp BaseProvider) CreateDatabaseHandler() func(w http.ResponseWriter, r *ht
 		var dbCreateRequest DbCreateRequest
 		err := decoder.Decode(&dbCreateRequest)
 		if err != nil {
-			logger.ErrorContext(ctx, "Failed to decode request in create database handler", slog.Any("error", err))
-			w.WriteHeader(http.StatusInternalServerError)
-			_, _ = w.Write([]byte(err.Error()))
+			logger.ErrorContext(ctx, "Failed to decode request in create database handler", slog.String("error", err.Error()))
+			common.ProcessResponseBody(ctx, w, []byte(err.Error()), http.StatusInternalServerError)
 			return
 		}
 		defer r.Body.Close()
 		response, err := bp.createDatabase(dbCreateRequest, ctx)
 		if err != nil {
 			logger.ErrorContext(ctx, "Failed to create database", slog.Any("error", err))
-			w.WriteHeader(http.StatusInternalServerError)
-			_, _ = w.Write([]byte(err.Error()))
+			common.ProcessResponseBody(ctx, w, []byte(err.Error()), http.StatusInternalServerError)
 			return
 		}
 		responseBody, err := json.Marshal(response)
 		if err != nil {
 			logger.ErrorContext(ctx, "Failed during response serialization in create database handler", slog.Any("error", err))
-			w.WriteHeader(http.StatusInternalServerError)
-			_, _ = w.Write([]byte(err.Error()))
+			common.ProcessResponseBody(ctx, w, []byte(err.Error()), http.StatusInternalServerError)
 			return
 		}
 		w.WriteHeader(http.StatusCreated)
 		_, _ = w.Write(responseBody)
+		common.ProcessResponseBody(ctx, w, responseBody, http.StatusCreated)
 	}
 }
 
@@ -135,19 +133,16 @@ func (bp BaseProvider) ListDatabasesHandler() func(w http.ResponseWriter, r *htt
 		databases, err := bp.listDatabases()
 		if err != nil {
 			logger.ErrorContext(ctx, "Failed to get indices list", slog.Any("error", err))
-			w.WriteHeader(http.StatusInternalServerError)
-			_, _ = w.Write([]byte(err.Error()))
+			common.ProcessResponseBody(ctx, w, []byte(err.Error()), http.StatusInternalServerError)
 			return
 		}
 		listIndicesBytes, err := json.Marshal(databases)
 		if err != nil {
 			logger.ErrorContext(ctx, "Failed to serialize indices list", slog.Any("error", err))
-			w.WriteHeader(http.StatusInternalServerError)
-			_, _ = w.Write([]byte(err.Error()))
+			common.ProcessResponseBody(ctx, w, []byte(err.Error()), http.StatusInternalServerError)
 			return
 		}
-		w.WriteHeader(http.StatusOK)
-		_, _ = w.Write(listIndicesBytes)
+		common.ProcessResponseBody(ctx, w, listIndicesBytes, http.StatusOK)
 	}
 }
 
@@ -160,8 +155,7 @@ func (bp BaseProvider) BulkDropResourceHandler() func(w http.ResponseWriter, r *
 		err := decoder.Decode(&resources)
 		if err != nil {
 			logger.ErrorContext(ctx, "Failed to decode request in delete resources method", slog.Any("error", err))
-			w.WriteHeader(http.StatusInternalServerError)
-			_, _ = w.Write([]byte(err.Error()))
+			common.ProcessResponseBody(ctx, w, []byte(err.Error()), http.StatusInternalServerError)
 			return
 		}
 		defer r.Body.Close()
@@ -179,11 +173,10 @@ func (bp BaseProvider) BulkDropResourceHandler() func(w http.ResponseWriter, r *
 		bytesResult, err := json.Marshal(resourcesToReturn)
 		if err != nil {
 			logger.ErrorContext(ctx, "Failed to serialize resources list", slog.Any("error", err))
-			w.WriteHeader(http.StatusInternalServerError)
-			_, _ = w.Write([]byte(err.Error()))
+			common.ProcessResponseBody(ctx, w, []byte(err.Error()), http.StatusInternalServerError)
 			return
 		}
-		_, _ = w.Write(bytesResult)
+		common.ProcessResponseBody(ctx, w, bytesResult, 0)
 	}
 }
 
@@ -197,15 +190,13 @@ func (bp BaseProvider) UpdateMetadataHandler() func(w http.ResponseWriter, r *ht
 		err := decoder.Decode(&metadata)
 		if err != nil {
 			logger.ErrorContext(ctx, "Failed to decode request in update metadata method", slog.Any("error", err))
-			w.WriteHeader(http.StatusInternalServerError)
-			_, _ = w.Write([]byte(err.Error()))
+			common.ProcessResponseBody(ctx, w, []byte(err.Error()), http.StatusInternalServerError)
 			return
 		}
 		_, err = bp.updateMetadata(indexName, metadata, ctx)
 		if err != nil {
 			logger.ErrorContext(ctx, "Failed to update metadata for index", slog.Any("error", err))
-			w.WriteHeader(http.StatusInternalServerError)
-			_, _ = w.Write([]byte(err.Error()))
+			common.ProcessResponseBody(ctx, w, []byte(err.Error()), http.StatusInternalServerError)
 			return
 		}
 		w.WriteHeader(http.StatusOK)
@@ -224,56 +215,67 @@ func (bp BaseProvider) SupportsHandler() func(w http.ResponseWriter, r *http.Req
 		responseBody, err := json.Marshal(supports)
 		if err != nil {
 			logger.ErrorContext(ctx, "Failed to serialize information about supported features", slog.Any("error", err))
-			w.WriteHeader(http.StatusInternalServerError)
-			_, _ = w.Write([]byte(err.Error()))
+			common.ProcessResponseBody(ctx, w, []byte(err.Error()), http.StatusInternalServerError)
 			return
 		}
-		_, _ = w.Write(responseBody)
+
+		common.ProcessResponseBody(ctx, w, responseBody, 0)
 	}
 }
 
-func (bp BaseProvider) EnsureAggregationIndex() {
+func (bp BaseProvider) EnsureAggregationIndex(ctx context.Context) error {
 	bp.mutex.Lock()
 	defer bp.mutex.Unlock()
 	existsRequest := opensearchapi.IndicesExistsRequest{
 		Index: []string{DbaasMetadata},
 	}
-	ctx := context.WithValue(context.Background(), common.RequestIdKey, common.GenerateUUID())
-	exist, err := existsRequest.Do(ctx, bp.opensearch.Client)
+
+	childCtx := context.WithValue(ctx, common.RequestIdKey, common.GenerateUUID())
+	exist, err := existsRequest.Do(childCtx, bp.opensearch.Client)
 	if err != nil {
-		logger.ErrorContext(ctx, fmt.Sprintf("Failed to check if '%s' index exists", DbaasMetadata), slog.Any("error", err))
-		panic(err)
+		logger.ErrorContext(childCtx, fmt.Sprintf("Failed to check if '%s' index exists", DbaasMetadata), slog.String("error", err.Error()))
+		return fmt.Errorf("failed to check if '%s' index exists %w", DbaasMetadata, err)
 	}
-	logger.DebugContext(ctx, fmt.Sprintf("Check if index exists: %v", exist))
+
+	logger.DebugContext(childCtx, fmt.Sprintf("Check if index exists: %v", exist))
 	if exist.StatusCode == 200 {
-		logger.DebugContext(ctx, fmt.Sprintf("'%s' index already exists", DbaasMetadata))
-		return
+		logger.DebugContext(childCtx, fmt.Sprintf("'%s' index already exists", DbaasMetadata))
+		return nil
 	}
 	createRequest := opensearchapi.IndicesCreateRequest{
 		Index: DbaasMetadata,
 	}
-	createResponse, err := createRequest.Do(context.Background(), bp.opensearch.Client)
+	createResponse, err := createRequest.Do(childCtx, bp.opensearch.Client)
 	if err != nil {
-		exist, err = existsRequest.Do(context.Background(), bp.opensearch.Client)
+		exist, err = existsRequest.Do(childCtx, bp.opensearch.Client)
 		if err != nil {
-			logger.ErrorContext(ctx, fmt.Sprintf("Failed to check if '%s' index exists", DbaasMetadata), slog.Any("error", err))
-			panic(err)
+			logger.ErrorContext(childCtx, fmt.Sprintf("failed to check if '%s' index exists", DbaasMetadata), slog.Any("error", err))
+			return fmt.Errorf("failed to check if '%s' index exists %w", DbaasMetadata, err)
 		}
-		logger.DebugContext(ctx, fmt.Sprintf("Check if index exists: %v", exist))
+		logger.DebugContext(childCtx, fmt.Sprintf("Check if index exists: %v", exist))
 		if exist.StatusCode == 200 {
-			logger.DebugContext(ctx, fmt.Sprintf("'%s' index already exists", DbaasMetadata))
-			return
+			logger.DebugContext(childCtx, fmt.Sprintf("'%s' index already exists", DbaasMetadata))
+			return nil
 		}
-		logger.ErrorContext(ctx, fmt.Sprintf("Failed to create '%s' index", DbaasMetadata), slog.Any("error", err))
-		panic(slog.Any("error", err))
+		logger.ErrorContext(childCtx, fmt.Sprintf("failed to create '%s' index", DbaasMetadata), slog.Any("error", err))
+		return fmt.Errorf("failed to create '%s' index %w", DbaasMetadata, err)
 	}
 	defer createResponse.Body.Close()
+
 	if createResponse.StatusCode != http.StatusCreated && createResponse.StatusCode != http.StatusOK {
-		body, _ := io.ReadAll(createResponse.Body)
-		panic(fmt.Sprintf("%s index cannot be created because of error: [%d] %s", DbaasMetadata,
+		var body []byte
+		body, err = io.ReadAll(createResponse.Body)
+		if err != nil {
+			logger.ErrorContext(childCtx, "failed to read from http response body", slog.String("error", err.Error()))
+			return err
+		}
+		logger.ErrorContext(childCtx, fmt.Sprintf("%s index cannot be created because of error: [%d] %s", DbaasMetadata,
 			createResponse.StatusCode, string(body)))
+		return fmt.Errorf(fmt.Sprintf("%s index cannot be created because of error: [%d]", DbaasMetadata,
+			createResponse.StatusCode))
 	}
-	logger.DebugContext(ctx, fmt.Sprintf("'%s' index is created", DbaasMetadata))
+	logger.DebugContext(childCtx, fmt.Sprintf("'%s' index is created", DbaasMetadata))
+	return nil
 }
 
 func (bp BaseProvider) createDatabase(requestOnCreateDb DbCreateRequest, ctx context.Context) (interface{}, error) {
