@@ -178,13 +178,14 @@ func (bp BackupProvider) CollectBackupHandler() func(w http.ResponseWriter, r *h
 		if err != nil {
 			if errors.Is(err, ErrBackupNotFound) {
 				w.WriteHeader(http.StatusNotFound)
-				_, err = w.Write([]byte(err.Error()))
-				if err != nil {
-					logger.ErrorContext(ctx, "failed to write bytes to writer output channel", slog.String("error", err.Error()))
-				}
+			} else {
+				logger.ErrorContext(ctx, "failed to fetch job status from curator", slog.Any("error", err))
+				w.WriteHeader(http.StatusInternalServerError)
+				_, _ = w.Write([]byte(err.Error()))
 				return
 			}
 		}
+
 		responseBody, err := json.Marshal(response)
 		if err != nil {
 			logger.ErrorContext(ctx, "Failed to marshal response to JSON", slog.Any("error", err))
@@ -228,10 +229,10 @@ func (bp BackupProvider) TrackBackupHandler() func(w http.ResponseWriter, r *htt
 		if err != nil {
 			if errors.Is(err, ErrBackupNotFound) {
 				w.WriteHeader(http.StatusNotFound)
-				_, err = w.Write([]byte(err.Error()))
-				if err != nil {
-					logger.ErrorContext(ctx, "failed to write bytes to writer output channel", slog.String("error", err.Error()))
-				}
+			} else {
+				logger.ErrorContext(ctx, "Failed to marshal response to JSON", slog.Any("error", err))
+				w.WriteHeader(http.StatusInternalServerError)
+				_, _ = w.Write([]byte(err.Error()))
 				return
 			}
 		}
