@@ -96,6 +96,7 @@ func (r CreateRolesMappingRequest) Do(ctx context.Context, transport opensearcha
 	if err != nil {
 		return nil, err
 	}
+	defer req.Body.Close()
 
 	if len(params) > 0 {
 		q := req.URL.Query()
@@ -120,7 +121,7 @@ func (r CreateRolesMappingRequest) Do(ctx context.Context, transport opensearcha
 	if ctx != nil {
 		req = req.WithContext(ctx)
 	}
-
+	//nolint:bodyclose
 	res, err := transport.Perform(req)
 	if err != nil {
 		return nil, err

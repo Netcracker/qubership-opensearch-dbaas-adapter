@@ -147,8 +147,10 @@ func TestCreateIndexWithCustomPrefix(t *testing.T) {
 			CreateOnly:     []string{"index"},
 		},
 	}
-	r, _ := baseProvider.createDatabase(requestOnCreateDb, ctx)
-	response := r.(DbCreateResponse)
+	r, err := baseProvider.createDatabase(requestOnCreateDb, ctx)
+	assert.NoError(t, err, "failed to create database")
+	response, ok := r.(DbCreateResponse)
+	assert.False(t, ok, "failed to cast type DbCreateResponse")
 	logger.InfoContext(ctx, fmt.Sprintf("Response is %v", response))
 	assert.Equal(t, namePrefix, response.ConnectionProperties.ResourcePrefix)
 	expectedIndexName := fmt.Sprintf("%s_%s", response.ConnectionProperties.ResourcePrefix,
@@ -176,8 +178,10 @@ func TestCreateIndexWithPrefix(t *testing.T) {
 			CreateOnly:     []string{"index"},
 		},
 	}
-	r, _ := baseProvider.createDatabase(requestOnCreateDb, ctx)
-	response := r.(DbCreateResponse)
+	r, err := baseProvider.createDatabase(requestOnCreateDb, ctx)
+	assert.NoError(t, err, "failed to create database")
+	response, ok := r.(DbCreateResponse)
+	assert.False(t, ok, "failed to cast type DbCreateResponse")
 	logger.InfoContext(ctx, fmt.Sprintf("Response is %v", response))
 	assert.NotEmpty(t, response.ConnectionProperties.ResourcePrefix)
 	expectedIndexName := fmt.Sprintf("%s_%s", response.ConnectionProperties.ResourcePrefix,
@@ -205,8 +209,10 @@ func TestCreateIndexWithoutPrefix(t *testing.T) {
 			CreateOnly:     []string{"index"},
 		},
 	}
-	r, _ := baseProvider.createDatabase(requestOnCreateDb, ctx)
-	response := r.(DbCreateResponse)
+	r, err := baseProvider.createDatabase(requestOnCreateDb, ctx)
+	assert.NoError(t, err, "failed to create database")
+	response, ok := r.(DbCreateResponse)
+	assert.False(t, ok, "failed to cast type DbCreateResponse")
 	logger.InfoContext(ctx, fmt.Sprintf("Response is %v", response))
 	assert.Empty(t, response.ConnectionProperties.ResourcePrefix)
 	expectedIndexName := fmt.Sprintf("dbaas_%s", requestOnCreateDb.DbName)

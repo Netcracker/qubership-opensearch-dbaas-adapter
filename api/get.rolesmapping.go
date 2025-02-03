@@ -114,7 +114,7 @@ func (r GetRolesMappingRequest) Do(ctx context.Context, transport opensearchapi.
 	if ctx != nil {
 		req = req.WithContext(ctx)
 	}
-
+	//nolint:bodyclose
 	res, err := transport.Perform(req)
 	if err != nil {
 		return nil, err

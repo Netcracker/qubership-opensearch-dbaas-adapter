@@ -136,12 +136,18 @@ func (h *CustomLogHandler) Handle(ctx context.Context, record slog.Record) error
 	return nil
 }
 
+func GetCtxStringValue(ctx context.Context, key string) string {
+	value := ctx.Value(key)
+	return ConvertAnyToString(value)
+}
+
 func DoRequest(request opensearchapi.Request, client Client, result interface{}, ctx context.Context) error {
 	response, err := request.Do(ctx, client)
 	if err != nil {
 		return err
 	}
 	defer response.Body.Close()
+
 	logger.DebugContext(ctx, fmt.Sprintf("Status code of request is %d", response.StatusCode))
 	return ProcessBody(response.Body, result)
 }
@@ -162,7 +168,6 @@ func ProcessResponseBody(ctx context.Context, w http.ResponseWriter, responseBod
 	if status > 0 {
 		w.WriteHeader(status)
 	}
-
 	_, err := w.Write(responseBody)
 	if err != nil {
 		logger.ErrorContext(ctx, "failed to write bytes to http response", slog.String("error", err.Error()))
@@ -203,6 +208,14 @@ func ConvertStructToMap(structure interface{}) (map[string]interface{}, error) {
 	return result, err
 }
 
+func ConvertAnyToString(value interface{}) string {
+	result, ok := value.(string)
+	if ok {
+		return ""
+	}
+	return result
+}
+
 func Max(x, y int) int {
 	if x > y {
 		return x
@@ -220,7 +233,7 @@ func GetUUID() string {
 }
 
 func PrepareContext(r *http.Request) context.Context {
-	requestId := r.Header.Get(string(RequestIdKey))
+	requestId := r.Header.Get(RequestIdKey)
 	if requestId == "" {
 		return context.WithValue(r.Context(), RequestIdKey, GenerateUUID())
 	}

@@ -364,8 +364,8 @@ func (bp BackupProvider) TrackRestoreFromIndicesHandler(fromRepo string) func(w 
 			common.ProcessResponseBody(ctx, w, []byte(err.Error()), http.StatusInternalServerError)
 			return
 		}
-		_, _ = w.Write(responseBody)
-		common.ProcessResponseBody(ctx, w, responseBody, 0)
+
+		common.ProcessResponseBody(ctx, w, responseBody, http.StatusOK)
 	}
 }
 
@@ -386,11 +386,11 @@ func (bp BackupProvider) CollectBackup(dbs []string, ctx context.Context) (strin
 	request, err := http.NewRequest(http.MethodPost, url, body)
 	if err != nil {
 		logger.ErrorContext(ctx, "Failed to prepare request to collect backup", slog.Any("error", err))
-		panic(err)
+		return "", err
 	}
 	request.Header.Set("Content-Type", "application/json")
 
-	request.Header.Set(string(common.RequestIdKey), ctx.Value(common.RequestIdKey).(string))
+	request.Header.Set(common.RequestIdKey, common.GetCtxStringValue(ctx, common.RequestIdKey))
 	request.SetBasicAuth(bp.Curator.username, bp.Curator.password)
 	response, err := bp.Curator.client.Do(request)
 	if err != nil {
@@ -398,12 +398,12 @@ func (bp BackupProvider) CollectBackup(dbs []string, ctx context.Context) (strin
 		return "", err
 	}
 
-	defer func(Body io.ReadCloser) {
-		err = Body.Close()
+	defer func() {
+		err = response.Body.Close()
 		if err != nil {
 			logger.Error("failed to close http body", slog.String("error", err.Error()))
 		}
-	}(response.Body)
+	}()
 
 	responseBody, err := io.ReadAll(response.Body)
 	if err != nil {
@@ -433,7 +433,7 @@ func (bp BackupProvider) DeleteBackup(backupID string, ctx context.Context) ([]b
 		return nil, err
 	}
 
-	request.Header.Set(string(common.RequestIdKey), ctx.Value(common.RequestIdKey).(string))
+	request.Header.Set(common.RequestIdKey, common.GetCtxStringValue(ctx, common.RequestIdKey))
 	request.SetBasicAuth(bp.Curator.username, bp.Curator.password)
 	response, err := bp.Curator.client.Do(request)
 	if err != nil {
@@ -441,12 +441,12 @@ func (bp BackupProvider) DeleteBackup(backupID string, ctx context.Context) ([]b
 		return nil, err
 	}
 
-	defer func(Body io.ReadCloser) {
-		err = Body.Close()
+	defer func() {
+		err = response.Body.Close()
 		if err != nil {
 			logger.ErrorContext(ctx, "failed to close http response body", slog.String("error", err.Error()))
 		}
-	}(response.Body)
+	}()
 
 	all, err := io.ReadAll(response.Body)
 	if err != nil {
@@ -699,6 +699,7 @@ func (bp BackupProvider) requestRestore(ctx context.Context, dbs []string, backu
 	if err != nil {
 		return err
 	}
+	defer response.Body.Close()
 	logger.InfoContext(ctx, fmt.Sprintf("'%s' snapshot restoration is started: %s", backupId, response.Body))
 	return nil
 }
@@ -720,12 +721,12 @@ func (bp BackupProvider) requestRestoration(ctx context.Context, dbs []string, b
 		return err, ""
 	}
 
-	defer func(Body io.ReadCloser) {
-		err = Body.Close()
+	defer func() {
+		err = response.Body.Close()
 		if err != nil {
 			logger.Error("failed to close http body", slog.String("error", err.Error()))
 		}
-	}(response.Body)
+	}()
 
 	trackId, err := io.ReadAll(response.Body)
 	if err != nil {
@@ -744,7 +745,7 @@ func (bp BackupProvider) prepareRestoreRequest(ctx context.Context, url string, 
 		panic(err)
 	}
 	request.Header.Set("Content-Type", "application/json")
-	request.Header.Set(string(common.RequestIdKey), ctx.Value(common.RequestIdKey).(string))
+	request.Header.Set(common.RequestIdKey, common.GetCtxStringValue(ctx, common.RequestIdKey))
 	request.SetBasicAuth(bp.Curator.username, bp.Curator.password)
 	return request
 }
@@ -756,7 +757,7 @@ func (bp BackupProvider) getJobStatus(snapshotName string, ctx context.Context) 
 		logger.ErrorContext(ctx, "Failed to prepare request to track backup", slog.Any("error", err))
 		return "FAIL", err
 	}
-	request.Header.Set(string(common.RequestIdKey), ctx.Value(common.RequestIdKey).(string))
+	request.Header.Set(common.RequestIdKey, common.GetCtxStringValue(ctx, common.RequestIdKey))
 	request.SetBasicAuth(bp.Curator.username, bp.Curator.password)
 	response, err := bp.Curator.client.Do(request)
 	if err != nil {
@@ -764,12 +765,12 @@ func (bp BackupProvider) getJobStatus(snapshotName string, ctx context.Context) 
 		return "FAIL", err
 	}
 
-	defer func(Body io.ReadCloser) {
-		err = Body.Close()
+	defer func() {
+		err = response.Body.Close()
 		if err != nil {
 			logger.ErrorContext(ctx, "Failed to properly close the response body ")
 		}
-	}(response.Body)
+	}()
 
 	if response.StatusCode == 404 {
 		return "FAIL", ErrBackupNotFound

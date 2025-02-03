@@ -14,6 +14,11 @@ linters:
  #   - prealloc
  #   - gocritic
 linters-settings:
+  staticcheck:
+    checks:
+      - all
+      - "-SA1019"
+      - "-SA1029"
   errcheck:
     check-type-assertions: true
     check-blank: true
@@ -32,6 +37,10 @@ linters-settings:
      #  - opinionated
      #  - performance
      #  - style
+
+issues:
+  exclude-files:
+    - _test\.go
 
 run:
   timeout: 10m

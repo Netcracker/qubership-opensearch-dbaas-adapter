@@ -96,6 +96,7 @@ func (r CreateRoleRequest) Do(ctx context.Context, transport opensearchapi.Trans
 	if err != nil {
 		return nil, err
 	}
+	defer req.Body.Close()
 
 	if len(params) > 0 {
 		q := req.URL.Query()
@@ -120,7 +121,7 @@ func (r CreateRoleRequest) Do(ctx context.Context, transport opensearchapi.Trans
 	if ctx != nil {
 		req = req.WithContext(ctx)
 	}
-
+	//nolint:bodyclose
 	res, err := transport.Perform(req)
 	if err != nil {
 		return nil, err

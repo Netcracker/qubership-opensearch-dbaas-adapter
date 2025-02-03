@@ -120,8 +120,7 @@ func (bp BaseProvider) CreateDatabaseHandler() func(w http.ResponseWriter, r *ht
 			common.ProcessResponseBody(ctx, w, []byte(err.Error()), http.StatusInternalServerError)
 			return
 		}
-		w.WriteHeader(http.StatusCreated)
-		_, _ = w.Write(responseBody)
+
 		common.ProcessResponseBody(ctx, w, responseBody, http.StatusCreated)
 	}
 }
@@ -271,8 +270,8 @@ func (bp BaseProvider) EnsureAggregationIndex(ctx context.Context) error {
 		}
 		logger.ErrorContext(childCtx, fmt.Sprintf("%s index cannot be created because of error: [%d] %s", DbaasMetadata,
 			createResponse.StatusCode, string(body)))
-		return fmt.Errorf(fmt.Sprintf("%s index cannot be created because of error: [%d]", DbaasMetadata,
-			createResponse.StatusCode))
+		return fmt.Errorf("%s index cannot be created because of error: [%d]", DbaasMetadata,
+			createResponse.StatusCode)
 	}
 	logger.DebugContext(childCtx, fmt.Sprintf("'%s' index is created", DbaasMetadata))
 	return nil
@@ -287,12 +286,18 @@ func (bp BaseProvider) createDatabase(requestOnCreateDb DbCreateRequest, ctx con
 	logger.InfoContext(ctx, fmt.Sprintf("Creating new database for requests, dbName: '%s', username: '%s', metadata: '%+v', settings: '%+v'",
 		requestOnCreateDb.DbName, requestOnCreateDb.Username, requestOnCreateDb.Metadata, requestOnCreateDb.Settings))
 	if classifier, ok := requestOnCreateDb.Metadata["classifier"]; ok {
-		if requestNamespace, ok := classifier.(map[string]interface{})["namespace"]; ok {
-			namespace = requestNamespace.(string)
+		var classifierMap map[string]interface{}
+		classifierMap, ok = classifier.(map[string]interface{})
+		if ok {
+			var requestNamespace interface{}
+			if requestNamespace, ok = classifierMap["namespace"]; ok {
+				namespace = common.ConvertAnyToString(requestNamespace)
+			}
 		}
+
 	}
 	if requestMicroserviceName, ok := requestOnCreateDb.Metadata["microserviceName"]; ok {
-		microserviceName = requestMicroserviceName.(string)
+		microserviceName = common.ConvertAnyToString(requestMicroserviceName)
 	}
 
 	if requestOnCreateDb.Settings.ResourcePrefix {
@@ -408,7 +413,10 @@ func (bp BaseProvider) createDatabase(requestOnCreateDb DbCreateRequest, ctx con
 	_, err = bp.CreateMetadata(metadataID, requestOnCreateDb.Metadata, ctx)
 	if err != nil {
 		if indexName != "" {
-			_ = bp.deleteDatabase(indexName, ctx)
+			err = bp.deleteDatabase(indexName, ctx)
+			if err != nil {
+				return nil, err
+			}
 		}
 		return nil, err
 	}
@@ -596,7 +604,10 @@ func (bp BaseProvider) ensureMetadata(indexName string, metadata map[string]inte
 	ret = false
 	source, err := bp.GetMetadata(indexName, ctx)
 	if err != nil || source == nil {
-		_, _ = bp.CreateMetadata(indexName, metadata, ctx)
+		_, err = bp.CreateMetadata(indexName, metadata, ctx)
+		if err != nil {
+			return
+		}
 		ret = true
 	}
 	return
