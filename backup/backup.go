@@ -168,7 +168,7 @@ func (bp BackupProvider) CollectBackupHandler() func(w http.ResponseWriter, r *h
 
 		backupID, err := bp.CollectBackup(databases, ctx)
 		if err != nil {
-			logger.ErrorContext(ctx, "Failed to create snapshot", slog.Any("error", err))
+			logger.ErrorContext(ctx, "Failed to create snapshot", slog.String("error", err.Error()))
 			w.WriteHeader(http.StatusInternalServerError)
 			_, _ = w.Write([]byte(err.Error()))
 			return
@@ -179,7 +179,7 @@ func (bp BackupProvider) CollectBackupHandler() func(w http.ResponseWriter, r *h
 			if errors.Is(err, ErrBackupNotFound) {
 				w.WriteHeader(http.StatusNotFound)
 			} else {
-				logger.ErrorContext(ctx, "failed to fetch job status from curator", slog.Any("error", err))
+				logger.ErrorContext(ctx, "failed to fetch job status from curator", slog.String("error", err.Error()))
 				w.WriteHeader(http.StatusInternalServerError)
 				_, _ = w.Write([]byte(err.Error()))
 				return
@@ -188,7 +188,7 @@ func (bp BackupProvider) CollectBackupHandler() func(w http.ResponseWriter, r *h
 
 		responseBody, err := json.Marshal(response)
 		if err != nil {
-			logger.ErrorContext(ctx, "Failed to marshal response to JSON", slog.Any("error", err))
+			logger.ErrorContext(ctx, "Failed to marshal response to JSON", slog.String("error", err.Error()))
 			w.WriteHeader(http.StatusInternalServerError)
 			_, _ = w.Write([]byte(err.Error()))
 			return
