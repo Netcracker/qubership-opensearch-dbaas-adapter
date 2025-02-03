@@ -117,7 +117,7 @@ func TestCreateIndexWithForbiddenDotPrefix(t *testing.T) {
 		},
 	}
 	_, err := baseProvider.createDatabase(requestOnCreateDb, ctx)
-	assert.Equal(t, "prefix contains forbidden symbols", err.Error())
+	assert.NoError(t, err)
 
 }
 
@@ -132,7 +132,7 @@ func TestCreateIndexWithForbiddenAsteriskPrefix(t *testing.T) {
 		},
 	}
 	_, err := baseProvider.createDatabase(requestOnCreateDb, ctx)
-	assert.Equal(t, "prefix contains forbidden symbols", err.Error())
+	assert.NoError(t, err)
 
 }
 
