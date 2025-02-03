@@ -176,14 +176,10 @@ func (bp BackupProvider) CollectBackupHandler() func(w http.ResponseWriter, r *h
 
 		response, err := bp.TrackBackup(backupID, ctx)
 		if err != nil {
-			if errors.Is(err, ErrBackupNotFound) {
-				w.WriteHeader(http.StatusNotFound)
-			} else {
-				logger.ErrorContext(ctx, "failed to fetch job status from curator", slog.String("error", err.Error()))
-				w.WriteHeader(http.StatusInternalServerError)
-				_, _ = w.Write([]byte(err.Error()))
-				return
-			}
+			logger.ErrorContext(ctx, "failed to fetch job status from curator", slog.String("error", err.Error()))
+			w.WriteHeader(http.StatusInternalServerError)
+			_, _ = w.Write([]byte(err.Error()))
+			return
 		}
 
 		responseBody, err := json.Marshal(response)
