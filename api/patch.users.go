@@ -116,7 +116,7 @@ func (r PatchUsersRequest) Do(ctx context.Context, transport opensearchapi.Trans
 	if ctx != nil {
 		req = req.WithContext(ctx)
 	}
-
+	//nolint:bodyclose
 	res, err := transport.Perform(req)
 	if err != nil {
 		return nil, err

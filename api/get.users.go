@@ -114,6 +114,7 @@ func (r GetUsersRequest) Do(ctx context.Context, transport opensearchapi.Transpo
 		req = req.WithContext(ctx)
 	}
 
+	//nolint:bodyclose
 	res, err := transport.Perform(req)
 	if err != nil {
 		return nil, err

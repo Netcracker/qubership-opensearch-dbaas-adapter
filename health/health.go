@@ -20,6 +20,7 @@ import (
 	"fmt"
 	"github.com/Netcracker/dbaas-opensearch-adapter/cluster"
 	"github.com/Netcracker/dbaas-opensearch-adapter/common"
+	"log/slog"
 	"net/http"
 )
 
@@ -40,10 +41,16 @@ func (h *Health) HealthHandler() func(w http.ResponseWriter, r *http.Request) {
 		if err != nil {
 			w.WriteHeader(http.StatusInternalServerError)
 			errorMessage := fmt.Sprintf("Error occurred during health serialization: %s", err.Error())
-			_, _ = w.Write([]byte(errorMessage))
+			_, err = w.Write([]byte(errorMessage))
+			if err != nil {
+				slog.Error("failed to write bytes to http response", slog.String("error", err.Error()), slog.String("http message", errorMessage))
+			}
 			return
 		}
-		_, _ = w.Write(responseBody)
+		_, err = w.Write(responseBody)
+		if err != nil {
+			slog.Error("failed to write bytes to http response", slog.String("error", err.Error()))
+		}
 	}
 }
 

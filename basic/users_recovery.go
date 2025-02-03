@@ -46,8 +46,7 @@ func (bp *BaseProvider) RecoverUsersHandler() func(w http.ResponseWriter, r *htt
 		err := decoder.Decode(&usersToRecover)
 		if err != nil {
 			logger.ErrorContext(ctx, "Failed to decode request in recover users handler", slog.Any("error", err))
-			w.WriteHeader(http.StatusInternalServerError)
-			_, _ = w.Write([]byte(err.Error()))
+			common.ProcessResponseBody(ctx, w, []byte(err.Error()), http.StatusInternalServerError)
 			return
 		}
 		if bp.recoveryState != RecoveryRunningState {
@@ -60,9 +59,9 @@ func (bp *BaseProvider) RecoverUsersHandler() func(w http.ResponseWriter, r *htt
 
 func (bp *BaseProvider) GetRecoveryStateHandler() func(w http.ResponseWriter, r *http.Request) {
 	return func(w http.ResponseWriter, r *http.Request) {
+		ctx := r.Context()
 		responseBody := []byte(bp.recoveryState)
-		w.WriteHeader(http.StatusOK)
-		_, _ = w.Write(responseBody)
+		common.ProcessResponseBody(ctx, w, responseBody, http.StatusOK)
 	}
 }
 

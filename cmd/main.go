@@ -16,6 +16,7 @@ package main
 
 import (
 	"bufio"
+	"context"
 	"flag"
 	"fmt"
 	"github.com/Netcracker/dbaas-opensearch-adapter/client"
@@ -23,11 +24,14 @@ import (
 	"github.com/Netcracker/dbaas-opensearch-adapter/server"
 	"log"
 	"os"
+	"os/signal"
 	"strconv"
 	"strings"
+	"syscall"
 )
 
 var (
+	//nolint:errcheck
 	tlsEnabled, _   = strconv.ParseBool(common.GetEnv("TLS_ENABLED", "false"))
 	adapterPort     = 8080
 	adapterProtocol = common.Http
@@ -45,6 +49,10 @@ var (
 )
 
 func main() {
+
+	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	defer stop()
+
 	logger.Info(fmt.Sprintf("Run build %s / %s with %+v ...", buildstamp, githash, os.Args))
 	flag.Parse()
 	if tlsEnabled {
@@ -66,7 +74,7 @@ func main() {
 		return
 	}
 
-	log.Fatalln("Fatal error", server.Server(adapterAddress, adapterUsername, adapterPassword))
+	server.Server(ctx, adapterAddress, adapterUsername, adapterPassword)
 }
 
 func terminal(reader *bufio.Reader, cl *client.AdapterClient) {
@@ -76,7 +84,11 @@ func terminal(reader *bufio.Reader, cl *client.AdapterClient) {
 		}
 	}()
 	fmt.Print("dbaas_opensearch> ")
-	line, _ := reader.ReadString('\n')
+	line, err := reader.ReadString('\n')
+	if err != nil {
+		log.Println(err.Error())
+		return
+	}
 	fmt.Println(line)
 	cl.Exec(line)
 }

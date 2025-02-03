@@ -113,7 +113,7 @@ func (r GetRolesRequest) Do(ctx context.Context, transport opensearchapi.Transpo
 	if ctx != nil {
 		req = req.WithContext(ctx)
 	}
-
+	//nolint:bodyclose
 	res, err := transport.Perform(req)
 	if err != nil {
 		return nil, err
