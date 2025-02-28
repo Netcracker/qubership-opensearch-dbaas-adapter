@@ -599,9 +599,12 @@ func (bp BackupProvider) ProcessRestorationRequest(backupId string, restorationR
 	var changedDbNames map[string]string
 	prefixes := make(map[string]struct{})
 	for _, dabatase := range restorationRequest.Databases {
+		logger.Info("CCCCCCCCCCCCCCCCCCCC")
 		dbs = append(dbs, fmt.Sprintf(`"%s"`, dabatase.Name))
 		if restorationRequest.RegenerateNames {
+			logger.Info("BBBBBBBBBBBBBB")
 			if dabatase.Prefix != "" {
+				logger.Info("AAAAAAAAAAAAAAAAA")
 				if ok, err := bp.checkPrefixUniqueness(dabatase.Prefix, ctx); ok {
 					if err != nil {
 						return nil, err, ""
