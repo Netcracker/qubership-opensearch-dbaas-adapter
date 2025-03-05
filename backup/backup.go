@@ -666,9 +666,11 @@ func (bp BackupProvider) checkPrefixUniqueness(prefix string, ctx context.Contex
 		}
 		for element, user := range users {
 			if strings.HasPrefix(element, prefix) {
+				logger.ErrorContext(ctx, fmt.Sprintf("provided prefix already exists or a part of another prefix: %+v", prefix))
 				return false, fmt.Errorf("provided prefix already exists or a part of another prefix: %+v", prefix)
 			}
 			if user.Attributes[resourcePrefixAttributeName] != "" && strings.HasPrefix(user.Attributes[resourcePrefixAttributeName], prefix) {
+				logger.ErrorContext(ctx, fmt.Sprintf("provided prefix already exists or a part of another prefix: %+v", prefix))
 				return false, fmt.Errorf("provided prefix already exists or a part of another prefix: %+v", prefix)
 			}
 		}
