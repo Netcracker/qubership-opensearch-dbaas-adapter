@@ -58,6 +58,11 @@ type DbCreateRequest struct {
 	Settings   Settings               `json:"settings,omitempty"`
 }
 
+type DbUpdateSettingsReq struct {
+	CurrentSettings Settings `json:"currentSettings"`
+	NewSettings     Settings `json:"newSettings"`
+}
+
 type Settings struct {
 	ResourcePrefix bool        `json:"resourcePrefix,omitempty"`
 	CreateOnly     []string    `json:"createOnly,omitempty"`
@@ -125,6 +130,31 @@ func (bp BaseProvider) CreateDatabaseHandler() func(w http.ResponseWriter, r *ht
 		}
 		w.WriteHeader(http.StatusCreated)
 		_, _ = w.Write(responseBody)
+	}
+}
+
+func (bp BaseProvider) UpdateDatabaseSettingsHandler() func(w http.ResponseWriter, r *http.Request) {
+	return func(w http.ResponseWriter, r *http.Request) {
+		ctx := common.PrepareContext(r)
+		logger.InfoContext(ctx, "Request to update database settings is received")
+		var updateSetting DbUpdateSettingsReq
+		err := json.NewDecoder(r.Body).Decode(&updateSetting)
+		if err != nil {
+			errMsg := fmt.Sprintf("UpdateDatabaseSettings failed error: msg %s - request id: %s", err.Error(), ctx.Value("RequestId"))
+			logger.ErrorContext(ctx, "Failed to unmarshal request in update database settings handler ",
+				slog.String("error", err.Error()))
+			w.WriteHeader(http.StatusInternalServerError)
+			_, err = w.Write([]byte(errMsg))
+			return
+		}
+		defer func(Body io.ReadCloser) {
+			err = Body.Close()
+			if err != nil {
+				logger.ErrorContext(ctx, "Failed to unmarshal request in update database settings handler ",
+					slog.String("error", err.Error()))
+			}
+		}(r.Body)
+
 	}
 }
 
@@ -420,6 +450,18 @@ func (bp BaseProvider) createDatabase(requestOnCreateDb DbCreateRequest, ctx con
 	}
 
 	return result, nil
+}
+
+func (bp BaseProvider) updateSettings(settings DbUpdateSettingsReq) error {
+	currentCreateOnly := settings.CurrentSettings.CreateOnly
+	newCreateOnly := settings.NewSettings.CreateOnly
+	if len(currentCreateOnly) == len(newCreateOnly) {
+		for i := 0; i < len(currentCreateOnly); i++ {
+
+		}
+	}
+
+	return nil
 }
 
 func checkForbiddenSymbolPrefix(namePrefix string) error {
