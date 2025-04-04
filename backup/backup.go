@@ -625,7 +625,7 @@ func (bp BackupProvider) ProcessRestorationRequest(backupId string, restorationR
 			}
 		}
 	}
-	logger.Info(" Renames : ", renames)
+	logger.Info(" Renames ************************************************ ", renames)
 	if len(renames) != 0 {
 		changedDbNames = make(map[string]string)
 		for _, pair := range renames {
