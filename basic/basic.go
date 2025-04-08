@@ -138,6 +138,9 @@ func (bp BaseProvider) UpdateDatabaseSettingsHandler() func(w http.ResponseWrite
 		ctx := common.PrepareContext(r)
 		logger.InfoContext(ctx, "Request to update database settings is received")
 		var updateSetting DbUpdateSettingsReq
+
+		dbName := mux.Vars(r)["dbName"]
+
 		err := json.NewDecoder(r.Body).Decode(&updateSetting)
 		if err != nil {
 			errMsg := fmt.Sprintf("UpdateDatabaseSettings failed error: msg %s - request id: %s", err.Error(), ctx.Value("RequestId"))
@@ -145,8 +148,12 @@ func (bp BaseProvider) UpdateDatabaseSettingsHandler() func(w http.ResponseWrite
 				slog.String("error", err.Error()))
 			w.WriteHeader(http.StatusInternalServerError)
 			_, err = w.Write([]byte(errMsg))
+			if err != nil {
+				logger.ErrorContext(ctx, "Failed during response serialization in update database settings handler ")
+			}
 			return
 		}
+
 		defer func(Body io.ReadCloser) {
 			err = Body.Close()
 			if err != nil {
@@ -155,6 +162,35 @@ func (bp BaseProvider) UpdateDatabaseSettingsHandler() func(w http.ResponseWrite
 			}
 		}(r.Body)
 
+		response, err := bp.updateSettings(ctx, dbName, updateSetting)
+		if err != nil {
+			errMsg := fmt.Sprintf("UpdateDatabaseSettings failed error: msg %s - request id: %s", err.Error(), ctx.Value("RequestId"))
+			logger.ErrorContext(ctx, "Failed to update settings ",
+				slog.String("error", err.Error()))
+			w.WriteHeader(http.StatusInternalServerError)
+			_, err = w.Write([]byte(errMsg))
+			if err != nil {
+				logger.ErrorContext(ctx, "Failed during response serialization in update database settings handler ")
+			}
+		}
+
+		responseBody, err := json.Marshal(response)
+		if err != nil {
+			errMsg := fmt.Sprintf("UpdateDatabaseSettings failed error: msg %s - request id: %s", err.Error(), ctx.Value("RequestId"))
+			logger.ErrorContext(ctx, "Failed to update settings ",
+				slog.String("error", err.Error()))
+			w.WriteHeader(http.StatusInternalServerError)
+			_, err = w.Write([]byte(errMsg))
+			if err != nil {
+				logger.ErrorContext(ctx, "Failed during response serialization in update database settings handler ")
+			}
+		}
+
+		w.WriteHeader(http.StatusOK)
+		_, err = w.Write(responseBody)
+		if err != nil {
+			logger.ErrorContext(ctx, "Failed during response serialization in update database settings handler ")
+		}
 	}
 }
 
@@ -452,16 +488,77 @@ func (bp BaseProvider) createDatabase(requestOnCreateDb DbCreateRequest, ctx con
 	return result, nil
 }
 
-func (bp BaseProvider) updateSettings(settings DbUpdateSettingsReq) error {
-	currentCreateOnly := settings.CurrentSettings.CreateOnly
-	newCreateOnly := settings.NewSettings.CreateOnly
-	if len(currentCreateOnly) == len(newCreateOnly) {
-		for i := 0; i < len(currentCreateOnly); i++ {
-
-		}
+func (bp BaseProvider) updateSettings(ctx context.Context, dbName string, settings DbUpdateSettingsReq) (DbCreateResponseMultiUser, error) {
+	var result DbCreateResponseMultiUser
+	var resources []dao.DbResource
+	var connections []common.ConnectionProperties
+	oldResources := settings.CurrentSettings.CreateOnly
+	trackCurrRes := make(map[string]struct{}, len(oldResources))
+	for _, stg := range oldResources {
+		trackCurrRes[stg] = struct{}{}
 	}
 
-	return nil
+	newResources := settings.NewSettings.CreateOnly
+
+	prefix := "dbaas"
+	indexName := buildIndexName(dbName, prefix)
+
+	for _, res := range newResources {
+		_, ok := trackCurrRes[res]
+		if ok {
+			continue
+		}
+
+		if res == common.IndexKind {
+			var hasIndex bool
+			hasIndex, err := bp.indexExist(ctx, dbName)
+			if err != nil {
+				return result, err
+			}
+			if hasIndex {
+				continue
+			}
+			createDBReq := DbCreateRequest{
+				DbName:   dbName,
+				Settings: settings.NewSettings,
+			}
+			indexName, err = bp.createIndex(createDBReq, prefix, ctx)
+			if err != nil {
+				return result, err
+			}
+			resources = append(resources, dao.DbResource{Kind: common.IndexKind, Name: indexName})
+		}
+
+		if res == common.UserKind {
+
+			users, err := bp.getUsersByPrefix(prefix)
+			if err != nil {
+				return result, err
+			}
+
+			hasUsers := len(users) > 0
+			if hasUsers {
+				continue
+			}
+
+			additionalUsername := prefix
+			additionalPassword := ""
+			var userDBresponse []dao.DbResource
+			for _, roleType := range bp.GetSupportedRoleTypes() {
+				additionalUsername, additionalPassword, userDBresponse, err =
+					bp.CreateUserByPrefix(additionalUsername, additionalPassword, dbName, roleType, ctx)
+				if err != nil {
+					return result, err
+				}
+				connectionProperties := bp.GetExtendedConnectionProperties(indexName, additionalUsername,
+					additionalPassword, prefix, roleType)
+				connections = append(connections, connectionProperties)
+				resources = append(resources, userDBresponse...)
+			}
+		}
+	}
+	result = DbCreateResponseMultiUser{Name: indexName, ConnectionProperties: connections, Resources: resources}
+	return result, nil
 }
 
 func checkForbiddenSymbolPrefix(namePrefix string) error {
@@ -471,6 +568,16 @@ func checkForbiddenSymbolPrefix(namePrefix string) error {
 	return nil
 }
 
+func (bp BaseProvider) indexExist(ctx context.Context, indexName string) (bool, error) {
+	request := opensearchapi.IndicesExistsRequest{ExpandWildcards: "all", Index: []string{indexName}}
+
+	result, err := request.Do(ctx, bp.opensearch.Client)
+	if err != nil {
+		return false, err
+	}
+	return result.StatusCode == 200, nil
+}
+
 func (bp BaseProvider) createIndex(requestOnCreateDb DbCreateRequest, prefix string, ctx context.Context) (string, error) {
 	indexName := buildIndexName(requestOnCreateDb.DbName, prefix)
 	body := strings.NewReader(getIndexSettings(&requestOnCreateDb, ctx))
@@ -478,6 +585,7 @@ func (bp BaseProvider) createIndex(requestOnCreateDb DbCreateRequest, prefix str
 		Index: indexName,
 		Body:  body,
 	}
+
 	logger.InfoContext(ctx, fmt.Sprintf("Creating index with name '%s'", indexName))
 	indexResponse, err := indexRequest.Do(context.Background(), bp.opensearch.Client)
 	if err != nil {
