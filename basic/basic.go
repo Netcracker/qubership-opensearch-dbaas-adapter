@@ -144,13 +144,7 @@ func (bp BaseProvider) UpdateDatabaseSettingsHandler() func(w http.ResponseWrite
 		err := json.NewDecoder(r.Body).Decode(&updateSetting)
 		if err != nil {
 			errMsg := fmt.Sprintf("UpdateDatabaseSettings failed error: msg %s - request id: %s", err.Error(), ctx.Value("RequestId"))
-			logger.ErrorContext(ctx, "Failed to unmarshal request in update database settings handler ",
-				slog.String("error", err.Error()))
-			w.WriteHeader(http.StatusInternalServerError)
-			_, err = w.Write([]byte(errMsg))
-			if err != nil {
-				logger.ErrorContext(ctx, "Failed during response serialization in update database settings handler ")
-			}
+			writeErrorMsg(ctx, w, errMsg, err, http.StatusInternalServerError)
 			return
 		}
 
@@ -165,25 +159,13 @@ func (bp BaseProvider) UpdateDatabaseSettingsHandler() func(w http.ResponseWrite
 		response, err := bp.updateSettings(ctx, dbName, updateSetting)
 		if err != nil {
 			errMsg := fmt.Sprintf("UpdateDatabaseSettings failed error: msg %s - request id: %s", err.Error(), ctx.Value("RequestId"))
-			logger.ErrorContext(ctx, "Failed to update settings ",
-				slog.String("error", err.Error()))
-			w.WriteHeader(http.StatusInternalServerError)
-			_, err = w.Write([]byte(errMsg))
-			if err != nil {
-				logger.ErrorContext(ctx, "Failed during response serialization in update database settings handler ")
-			}
+			writeErrorMsg(ctx, w, errMsg, err, http.StatusInternalServerError)
 		}
 
 		responseBody, err := json.Marshal(response)
 		if err != nil {
 			errMsg := fmt.Sprintf("UpdateDatabaseSettings failed error: msg %s - request id: %s", err.Error(), ctx.Value("RequestId"))
-			logger.ErrorContext(ctx, "Failed to update settings ",
-				slog.String("error", err.Error()))
-			w.WriteHeader(http.StatusInternalServerError)
-			_, err = w.Write([]byte(errMsg))
-			if err != nil {
-				logger.ErrorContext(ctx, "Failed during response serialization in update database settings handler ")
-			}
+			writeErrorMsg(ctx, w, errMsg, err, http.StatusInternalServerError)
 		}
 
 		w.WriteHeader(http.StatusOK)
@@ -1121,4 +1103,13 @@ func getIndexSettings(createDbRequest *DbCreateRequest, ctx context.Context) str
 		return string(createIndexSettings[:])
 	}
 	return ""
+}
+
+func writeErrorMsg(ctx context.Context, w http.ResponseWriter, errMsg string, err error, statusCode int) {
+	logger.ErrorContext(ctx, errMsg, slog.String("error", err.Error()))
+	w.WriteHeader(statusCode)
+	_, err = w.Write([]byte(errMsg))
+	if err != nil {
+		logger.ErrorContext(ctx, "An error occurred while writing to the HTTP response")
+	}
 }
