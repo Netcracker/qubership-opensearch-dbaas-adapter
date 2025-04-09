@@ -111,7 +111,7 @@ func Handlers(adapter common.Component) http.Handler {
 	).Methods(http.MethodPost)
 
 	r.Handle(fmt.Sprintf("%s/databases/settings", basePath),
-		handlers.LoggingHandler(os.Stdout, authorizer(baseProvider.CreateDatabaseHandler())),
+		handlers.LoggingHandler(os.Stdout, authorizer(baseProvider.UpdateDatabaseSettingsHandler())),
 	).Methods(http.MethodPut)
 
 	r.Handle(fmt.Sprintf("%s/databases", basePath),
