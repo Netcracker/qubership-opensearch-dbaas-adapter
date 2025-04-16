@@ -602,7 +602,7 @@ func (bp BackupProvider) ProcessRestorationRequest(backupId string, restorationR
 		dbs = append(dbs, fmt.Sprintf(`"%s"`, dabatase.Name))
 		if restorationRequest.RegenerateNames {
 			if dabatase.Prefix != "" {
-				if ok, err := bp.checkPrefixUniqueness(dabatase.Prefix, ctx); !ok {
+				if ok, err := bp.checkPrefixUniqueness(dabatase.Prefix, ctx); ok {
 					if err != nil {
 						return nil, err, ""
 					}
@@ -625,7 +625,6 @@ func (bp BackupProvider) ProcessRestorationRequest(backupId string, restorationR
 			}
 		}
 	}
-	logger.Info(" Renames ************************************************ ", renames)
 	if len(renames) != 0 {
 		changedDbNames = make(map[string]string)
 		for _, pair := range renames {
