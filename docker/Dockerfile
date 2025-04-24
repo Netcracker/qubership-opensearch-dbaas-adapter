@@ -1,5 +1,5 @@
 # Note: this uses host platform for the build, and we ask go build to target the needed platform, so we do not spend time on qemu emulation when running "go build"
-FROM --platform=$BUILDPLATFORM golang:1.22.5-alpine3.20 as builder
+FROM --platform=$BUILDPLATFORM golang:1.23-alpine3.21 as builder
 ARG BUILDPLATFORM
 ARG TARGETOS
 ARG TARGETARCH
