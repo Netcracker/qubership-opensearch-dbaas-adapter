@@ -210,7 +210,7 @@ func ConvertStructToMap(structure interface{}) (map[string]interface{}, error) {
 
 func ConvertAnyToString(value interface{}) string {
 	result, ok := value.(string)
-	if ok {
+	if !ok {
 		return ""
 	}
 	return result
@@ -243,7 +243,7 @@ func PrepareContext(r *http.Request) context.Context {
 func CheckPrefixUniqueness(prefix string, ctx context.Context, opensearchcli Client) (bool, error) {
 	logger.InfoContext(ctx, "Checking user prefix uniqueness during restoration with renaming")
 	getUsersRequest := api.GetUsersRequest{}
-	response, err := getUsersRequest.Do(context.Background(), opensearchcli)
+	response, err := getUsersRequest.Do(ctx, opensearchcli)
 	if err != nil {
 		return false, fmt.Errorf("failed to receive users: %+v", err)
 	}
