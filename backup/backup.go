@@ -199,24 +199,23 @@ func (bp BackupProvider) DeleteBackupHandler() func(w http.ResponseWriter, r *ht
 		vars := mux.Vars(r)
 		backupID := vars["backupID"]
 
-		response, err := bp.DeleteBackup(backupID, ctx)
+		responseBody, status, err := bp.DeleteBackup(backupID, ctx)
 		if err != nil {
 			logger.ErrorContext(ctx, "failed to delete backup", slog.String("error", err.Error()))
-			w.WriteHeader(http.StatusInternalServerError)
+			statusCode := http.StatusInternalServerError
+			if errors.Is(err, ErrBackupNotFound) {
+				statusCode = http.StatusNotFound
+			}
+
+			w.WriteHeader(statusCode)
 			_, _ = w.Write([]byte(err.Error()))
+
 			return
 		}
 
-		body, err := io.ReadAll(response.Body)
-		if err != nil {
-			logger.ErrorContext(ctx, "failed to read from http response", slog.String("error", err.Error()))
-			w.WriteHeader(http.StatusInternalServerError)
-			_, _ = w.Write([]byte(err.Error()))
-		}
-
-		if response.StatusCode > 200 {
-			w.WriteHeader(response.StatusCode)
-			_, _ = w.Write(body)
+		if status > 200 {
+			w.WriteHeader(status)
+			_, _ = w.Write(responseBody)
 			return
 		}
 
@@ -482,12 +481,12 @@ func (bp BackupProvider) TrackBackup(backupID string, ctx context.Context) (Acti
 	return backupTrack(backupID, jobStatus), nil
 }
 
-func (bp BackupProvider) DeleteBackup(backupID string, ctx context.Context) ([]byte, error) {
+func (bp BackupProvider) DeleteBackup(backupID string, ctx context.Context) ([]byte, int, error) {
 	url := fmt.Sprintf("%s/%s/%s", bp.Curator.url, "evict", backupID)
 	request, err := http.NewRequest(http.MethodPost, url, nil)
 	if err != nil {
 		logger.ErrorContext(ctx, "Failed to prepare request to delete backup", slog.Any("error", err))
-		return nil, err
+		return nil, http.StatusInternalServerError, err
 	}
 
 	request.Header.Set(common.RequestIdKey, common.GetCtxStringValue(ctx, common.RequestIdKey))
@@ -496,7 +495,7 @@ func (bp BackupProvider) DeleteBackup(backupID string, ctx context.Context) ([]b
 
 	if err != nil {
 		logger.ErrorContext(ctx, "failed to delete snapshot", slog.String("error", err.Error()))
-		return nil, err
+		return nil, http.StatusInternalServerError, err
 	}
 
 	defer func() {
@@ -506,17 +505,21 @@ func (bp BackupProvider) DeleteBackup(backupID string, ctx context.Context) ([]b
 		}
 	}()
 
+	if response.StatusCode == http.StatusInternalServerError {
+		return nil, http.StatusInternalServerError, ErrCuratorUnavailable
+	}
+
+	if response.StatusCode == http.StatusNotFound {
+		return nil, http.StatusNotFound, ErrBackupNotFound
+	}
+
 	all, err := io.ReadAll(response.Body)
 	if err != nil {
 		logger.ErrorContext(ctx, "failed to read bytes from http response body", slog.String("error", err.Error()))
-		return nil, err
+		return nil, http.StatusInternalServerError, err
 	}
 
-	if response.StatusCode == http.StatusInternalServerError {
-		return nil, ErrCuratorUnavailable
-	}
-
-	return all, nil
+	return all, response.StatusCode, nil
 }
 
 func (bp BackupProvider) RestoreBackup(backupId string, dbs []string, fromRepo string, regenerateNames bool, ctx context.Context) (map[string]string, error) {
