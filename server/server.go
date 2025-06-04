@@ -17,6 +17,7 @@ package server
 import (
 	"context"
 	"crypto/subtle"
+	"errors"
 	"fmt"
 	"github.com/Netcracker/dbaas-opensearch-adapter/backup"
 	"github.com/Netcracker/dbaas-opensearch-adapter/basic"
@@ -28,10 +29,12 @@ import (
 	"github.com/Netcracker/qubership-dbaas-adapter-core/pkg/dao"
 	"github.com/gorilla/handlers"
 	"github.com/gorilla/mux"
+	"log/slog"
 	"net/http"
 	"os"
 	"strconv"
 	"strings"
+	"time"
 )
 
 var (
@@ -43,24 +46,25 @@ var (
 	dbaasAggregatorRegistrationRetryDelay = common.GetIntEnv("DBAAS_AGGREGATOR_REGISTRATION_RETRY_DELAY_MS", 5000)
 	dbaasAggregatorPhysicalDatabaseId     = common.GetEnv("DBAAS_AGGREGATOR_PHYSICAL_DATABASE_IDENTIFIER", "unknown_opensearch")
 
-	opensearchHost                   = common.GetEnv("OPENSEARCH_HOST", "localhost")
-	opensearchPort                   = common.GetIntEnv("OPENSEARCH_PORT", 9200)
-	opensearchProtocol               = common.GetEnv("OPENSEARCH_PROTOCOL", common.Http)
-	opensearchUsername               = common.GetEnv("OPENSEARCH_USERNAME", "opensearch")
-	opensearchPassword               = common.GetEnv("OPENSEARCH_PASSWORD", "change")
-	opensearchRepo                   = common.GetEnv("OPENSEARCH_REPO", "dbaas-backups-repository")
-	opensearchRepoRoot               = common.GetEnv("OPENSEARCH_REPO_ROOT", "/usr/share/opensearch/")
+	opensearchHost     = common.GetEnv("OPENSEARCH_HOST", "localhost")
+	opensearchPort     = common.GetIntEnv("OPENSEARCH_PORT", 9200)
+	opensearchProtocol = common.GetEnv("OPENSEARCH_PROTOCOL", common.Http)
+	opensearchUsername = common.GetEnv("OPENSEARCH_USERNAME", "opensearch")
+	opensearchPassword = common.GetEnv("OPENSEARCH_PASSWORD", "change")
+	opensearchRepo     = common.GetEnv("OPENSEARCH_REPO", "dbaas-backups-repository")
+	opensearchRepoRoot = common.GetEnv("OPENSEARCH_REPO_ROOT", "/usr/share/opensearch/")
+	//nolint:errcheck
 	enhancedSecurityPluginEnabled, _ = strconv.ParseBool(common.GetEnv("ENHANCED_SECURITY_PLUGIN_ENABLED", "false"))
 
 	labelsFilename    = common.GetEnv("LABELS_FILE_LOCATION_NAME", "dbaas.physical_databases.registration.labels.json")
 	labelsLocationDir = common.GetEnv("LABELS_FILE_LOCATION_DIR", "/app/config/")
-
+	//nolint:errcheck
 	registrationEnabled, _ = strconv.ParseBool(common.GetEnv("REGISTRATION_ENABLED", "false"))
 )
 
 const certificatesFolder = "/tls"
 
-func Server(adapterAddress string, adapterUsername string, adapterPassword string) error {
+func Server(ctx context.Context, adapterAddress string, adapterUsername string, adapterPassword string) {
 	adapter := common.Component{
 		Address: adapterAddress,
 		Credentials: dao.BasicAuth{
@@ -68,22 +72,53 @@ func Server(adapterAddress string, adapterUsername string, adapterPassword strin
 			Password: adapterPassword,
 		},
 	}
+
+	hnd := Handlers(ctx, adapter)
+	if hnd == nil {
+		return
+	}
+
 	server := &http.Server{
 		Addr:    ":8080",
-		Handler: Handlers(adapter),
+		Handler: hnd,
 	}
-	if strings.Contains(adapterAddress, common.Https) {
-		server.Addr = ":8443"
-		return server.ListenAndServeTLS(fmt.Sprintf("%s/tls.crt", certificatesFolder), fmt.Sprintf("%s/tls.key", certificatesFolder))
+
+	isTlsEnabled := strings.Contains(adapterAddress, common.Https)
+	logger := common.GetLogger()
+
+	go func() {
+		var err error
+		if !isTlsEnabled {
+			err = server.ListenAndServe()
+		} else {
+			err = server.ListenAndServeTLS(fmt.Sprintf("%s/tls.crt", certificatesFolder),
+				fmt.Sprintf("%s/tls.key", certificatesFolder))
+		}
+
+		if err != nil && !errors.Is(err, http.ErrServerClosed) {
+			logger.ErrorContext(ctx, "server crashed with error", slog.String("error", err.Error()))
+		}
+	}()
+
+	<-ctx.Done()
+	deadlineCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
+	defer cancel()
+
+	err := server.Shutdown(deadlineCtx)
+	if err != nil {
+		logger.Error("failed to shutdown server")
 	}
-	return server.ListenAndServe()
+	logger.Info("server is down gracefully")
 }
 
-func Handlers(adapter common.Component) http.Handler {
+func Handlers(ctx context.Context, adapter common.Component) http.Handler {
 	opensearch := cluster.NewOpensearch(opensearchHost, opensearchPort,
 		opensearchProtocol, opensearchUsername, opensearchPassword)
 	baseProvider := basic.NewBaseProvider(opensearch)
-	baseProvider.EnsureAggregationIndex()
+	err := baseProvider.EnsureAggregationIndex(ctx)
+	if err != nil {
+		return nil
+	}
 	registrationProvider := startRegistration(adapter.Address, adapter.Credentials.Username,
 		adapter.Credentials.Password, baseProvider)
 	createBasicRoles(baseProvider)
@@ -183,7 +218,13 @@ func JsonContentType(h http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		defer func() { // error handler, when error occurred it sends request with http status 400 and body with error message
 			if err := recover(); err != nil {
-				http.Error(w, err.(string), http.StatusBadRequest)
+				strErr, ok := err.(string)
+				if ok {
+					http.Error(w, strErr, http.StatusBadRequest)
+				} else {
+					http.Error(w, "unrecognized error", http.StatusInternalServerError)
+				}
+
 				return
 			}
 		}()
@@ -299,13 +340,12 @@ func BasicAuthorizer(username string, password string, realm string) func(func(w
 	return func(f func(w http.ResponseWriter, r *http.Request)) http.Handler {
 		h := http.HandlerFunc(f)
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-
+			ctx := r.Context()
 			user, pass, ok := r.BasicAuth()
 
 			if !ok || subtle.ConstantTimeCompare([]byte(user), []byte(username)) != 1 || subtle.ConstantTimeCompare([]byte(pass), []byte(password)) != 1 {
 				w.Header().Set("WWW-Authenticate", `Basic realm="`+realm+`"`)
-				w.WriteHeader(http.StatusUnauthorized)
-				_, _ = w.Write([]byte("Not authorized to use this API, only DBaaS aggregator can use it.\n"))
+				common.ProcessResponseBody(ctx, w, []byte("Not authorized to use this API, only DBaaS aggregator can use it.\n"), http.StatusUnauthorized)
 				return
 			}
 			h.ServeHTTP(w, r)

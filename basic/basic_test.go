@@ -117,8 +117,8 @@ func TestCreateIndexWithForbiddenDotPrefix(t *testing.T) {
 		},
 	}
 	_, err := baseProvider.createDatabase(requestOnCreateDb, ctx)
+	assert.Error(t, err)
 	assert.Equal(t, "prefix contains forbidden symbols", err.Error())
-
 }
 
 func TestCreateIndexWithForbiddenAsteriskPrefix(t *testing.T) {
@@ -132,8 +132,8 @@ func TestCreateIndexWithForbiddenAsteriskPrefix(t *testing.T) {
 		},
 	}
 	_, err := baseProvider.createDatabase(requestOnCreateDb, ctx)
+	assert.Error(t, err)
 	assert.Equal(t, "prefix contains forbidden symbols", err.Error())
-
 }
 
 func TestCreateIndexWithCustomPrefix(t *testing.T) {
@@ -147,8 +147,10 @@ func TestCreateIndexWithCustomPrefix(t *testing.T) {
 			CreateOnly:     []string{"index"},
 		},
 	}
-	r, _ := baseProvider.createDatabase(requestOnCreateDb, ctx)
-	response := r.(DbCreateResponse)
+	r, err := baseProvider.createDatabase(requestOnCreateDb, ctx)
+	assert.NoError(t, err, "failed to create database")
+	response, ok := r.(DbCreateResponse)
+	assert.True(t, ok, "failed to cast type DbCreateResponse")
 	logger.InfoContext(ctx, fmt.Sprintf("Response is %v", response))
 	assert.Equal(t, namePrefix, response.ConnectionProperties.ResourcePrefix)
 	expectedIndexName := fmt.Sprintf("%s_%s", response.ConnectionProperties.ResourcePrefix,
@@ -176,8 +178,10 @@ func TestCreateIndexWithPrefix(t *testing.T) {
 			CreateOnly:     []string{"index"},
 		},
 	}
-	r, _ := baseProvider.createDatabase(requestOnCreateDb, ctx)
-	response := r.(DbCreateResponse)
+	r, err := baseProvider.createDatabase(requestOnCreateDb, ctx)
+	assert.NoError(t, err, "failed to create database")
+	response, ok := r.(DbCreateResponse)
+	assert.True(t, ok, "failed to cast type DbCreateResponse")
 	logger.InfoContext(ctx, fmt.Sprintf("Response is %v", response))
 	assert.NotEmpty(t, response.ConnectionProperties.ResourcePrefix)
 	expectedIndexName := fmt.Sprintf("%s_%s", response.ConnectionProperties.ResourcePrefix,
@@ -205,8 +209,10 @@ func TestCreateIndexWithoutPrefix(t *testing.T) {
 			CreateOnly:     []string{"index"},
 		},
 	}
-	r, _ := baseProvider.createDatabase(requestOnCreateDb, ctx)
-	response := r.(DbCreateResponse)
+	r, err := baseProvider.createDatabase(requestOnCreateDb, ctx)
+	assert.NoError(t, err, "failed to create database")
+	response, ok := r.(DbCreateResponse)
+	assert.True(t, ok, "failed to cast type DbCreateResponse")
 	logger.InfoContext(ctx, fmt.Sprintf("Response is %v", response))
 	assert.Empty(t, response.ConnectionProperties.ResourcePrefix)
 	expectedIndexName := fmt.Sprintf("dbaas_%s", requestOnCreateDb.DbName)
@@ -450,6 +456,7 @@ func TestCreateUserWithMicroserviceAndNamespaceInMetadata(t *testing.T) {
 	r, _ := baseProvider.createDatabase(requestOnCreateDb, ctx)
 	response := r.(DbCreateResponse)
 	assert.NotEmpty(t, response.ConnectionProperties.ResourcePrefix)
+	fmt.Println(response.ConnectionProperties.ResourcePrefix)
 	assert.Contains(t, response.ConnectionProperties.ResourcePrefix, "new-microservice-name_new-namespace")
 	assert.Empty(t, response.Name)
 	assert.Empty(t, response.ConnectionProperties.DbName)

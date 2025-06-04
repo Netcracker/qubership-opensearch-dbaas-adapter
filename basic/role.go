@@ -203,11 +203,13 @@ func (bp BaseProvider) createRole(clusterPermissions []string, indexPermissions 
 	if err != nil {
 		return fmt.Errorf("error occurred during [%s] role creation: %+v", name, err)
 	}
+	defer response.Body.Close()
+
 	if response.StatusCode == http.StatusOK || response.StatusCode == http.StatusCreated {
 		logger.Info(fmt.Sprintf("'%s' role is successfully created or updated", name))
 		return nil
 	}
-	defer response.Body.Close()
+
 	return fmt.Errorf("role with name [%s] is not created: %+v", name, response.Body)
 }
 

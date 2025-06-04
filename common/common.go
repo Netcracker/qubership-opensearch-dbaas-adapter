@@ -55,6 +55,8 @@ const (
 	RequestIdKey       = "X-Request-Id"
 )
 
+type CorrelationID string
+
 var logger = GetLogger()
 var BasePath = GetBasePath()
 var resourcePrefixAttributeName = "resource_prefix"
@@ -134,12 +136,18 @@ func (h *CustomLogHandler) Handle(ctx context.Context, record slog.Record) error
 	return nil
 }
 
+func GetCtxStringValue(ctx context.Context, key string) string {
+	value := ctx.Value(key)
+	return ConvertAnyToString(value)
+}
+
 func DoRequest(request opensearchapi.Request, client Client, result interface{}, ctx context.Context) error {
-	response, err := request.Do(context.Background(), client)
+	response, err := request.Do(ctx, client)
 	if err != nil {
 		return err
 	}
 	defer response.Body.Close()
+
 	logger.DebugContext(ctx, fmt.Sprintf("Status code of request is %d", response.StatusCode))
 	return ProcessBody(response.Body, result)
 }
@@ -154,6 +162,16 @@ func ProcessBody(body io.ReadCloser, result interface{}) error {
 	}
 	logger.Debug(fmt.Sprintf("Response body is %s", readBody))
 	return json.Unmarshal(readBody, result)
+}
+
+func ProcessResponseBody(ctx context.Context, w http.ResponseWriter, responseBody []byte, status int) {
+	if status > 0 {
+		w.WriteHeader(status)
+	}
+	_, err := w.Write(responseBody)
+	if err != nil {
+		logger.ErrorContext(ctx, "failed to write bytes to http response", slog.String("error", err.Error()))
+	}
 }
 
 func GenerateUUID() string {
@@ -190,6 +208,14 @@ func ConvertStructToMap(structure interface{}) (map[string]interface{}, error) {
 	return result, err
 }
 
+func ConvertAnyToString(value interface{}) string {
+	result, ok := value.(string)
+	if !ok {
+		return ""
+	}
+	return result
+}
+
 func Max(x, y int) int {
 	if x > y {
 		return x
@@ -217,7 +243,7 @@ func PrepareContext(r *http.Request) context.Context {
 func CheckPrefixUniqueness(prefix string, ctx context.Context, opensearchcli Client) (bool, error) {
 	logger.InfoContext(ctx, "Checking user prefix uniqueness during restoration with renaming")
 	getUsersRequest := api.GetUsersRequest{}
-	response, err := getUsersRequest.Do(context.Background(), opensearchcli)
+	response, err := getUsersRequest.Do(ctx, opensearchcli)
 	if err != nil {
 		return false, fmt.Errorf("failed to receive users: %+v", err)
 	}

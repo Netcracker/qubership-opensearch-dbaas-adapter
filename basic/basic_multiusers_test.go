@@ -66,7 +66,8 @@ func TestCreateMultiUsersWithResourcePrefix(t *testing.T) {
 	}
 	r, err := bp.createDatabase(requestOnCreateDb, ctx)
 	assert.Empty(t, err)
-	response := r.(DbCreateResponseMultiUser)
+	response, ok := r.(DbCreateResponseMultiUser)
+	assert.True(t, ok, "casting to DbCreateResponseMultiUser failed")
 	logger.InfoContext(ctx, fmt.Sprintf("Response is %v", response))
 	assert.Empty(t, response.Name)
 	assert.Len(t, response.ConnectionProperties, len(bp.GetSupportedRoleTypes()))

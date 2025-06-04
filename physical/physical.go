@@ -261,6 +261,7 @@ func (rs *RegistrationProvider) doHealthRequest() (int, error) {
 	if err != nil {
 		return http.StatusInternalServerError, fmt.Errorf("failed to get aggregator's health: %v", err)
 	}
+	defer response.Body.Close()
 	return response.StatusCode, nil
 }
 
@@ -302,17 +303,33 @@ func (rs *RegistrationProvider) performMigration(statusCode int,
 				DbName:               "",
 			})
 		}
-		physicalDatabaseRoleResponse, err = rs.doMigrationRequest(physicalDatabaseRegistrationResponse.Instruction.Id, physicalDatabaseRoleRequest, ctx)
+
+		statusCode, err = rs.performMigrationRequest(ctx, physicalDatabaseRegistrationResponse.Instruction.Id, physicalDatabaseRoleRequest)
 		if err != nil {
 			return err
 		}
-		statusCode = physicalDatabaseRoleResponse.StatusCode
 	}
 	if statusCode == http.StatusInternalServerError {
 		return fmt.Errorf("migration is not performed")
 	}
 	logger.InfoContext(ctx, "Migration to v3 version of DBaaS aggregator is completed successfully")
 	return nil
+}
+
+func (rs *RegistrationProvider) performMigrationRequest(ctx context.Context, id string, obj dao.PhysicalDatabaseRoleRequest) (int, error) {
+	physicalDatabaseRoleResponse, err := rs.doMigrationRequest(id, obj, ctx)
+	if err != nil {
+		return 0, err
+	}
+	defer func() {
+		err = physicalDatabaseRoleResponse.Body.Close()
+		if err != nil {
+			logger.Error("failed to close http response body", slog.String("error", err.Error()))
+		}
+	}()
+
+	statusCode := physicalDatabaseRoleResponse.StatusCode
+	return statusCode, nil
 }
 
 func (rs *RegistrationProvider) getAdditionalRoles(physicalDatabaseRegistrationResponse dao.PhysicalDatabaseRegistrationResponse,
@@ -338,7 +355,7 @@ func (rs *RegistrationProvider) createAdditionalResources(additionalRole dao.Add
 				fmt.Errorf("there is no `resourcePrefix` or `dbName` property for additional role with %s ID", additionalRole.Id)
 		}
 	}
-	resourcePrefix := resourcePrefixProperty.(string)
+	resourcePrefix := common.ConvertAnyToString(resourcePrefixProperty)
 	username, password, resources, err := rs.baseProvider.CreateUserByPrefix(resourcePrefix, "", resourcePrefix, roleType, ctx)
 	if err != nil {
 		return connectionProperties, nil, err
@@ -385,7 +402,7 @@ func (rs *RegistrationProvider) doMigrationRequest(instructionID string, request
 	}
 	request.SetBasicAuth(rs.dbaasAggregator.Credentials.Username, rs.dbaasAggregator.Credentials.Password)
 	request.Header.Set("Content-Type", "application/json")
-	request.Header.Set(common.RequestIdKey, ctx.Value(common.RequestIdKey).(string))
+	request.Header.Set(common.RequestIdKey, common.GetCtxStringValue(ctx, common.RequestIdKey))
 	response, err := rs.client.Do(request)
 	if err != nil {
 		logger.ErrorContext(ctx, "Failed to perform migration for physical database", slog.Any("error", err))
@@ -456,11 +473,10 @@ func (rs *RegistrationProvider) GetPhysicalDatabaseHandler() func(w http.Respons
 		responseBody, err := json.Marshal(physicalDatabase)
 		if err != nil {
 			logger.ErrorContext(ctx, "Failed to marshal physical database response to json", slog.Any("error", err))
-			w.WriteHeader(http.StatusInternalServerError)
-			_, _ = w.Write([]byte(err.Error()))
+			common.ProcessResponseBody(ctx, w, []byte(err.Error()), http.StatusInternalServerError)
 			return
 		}
-		_, _ = w.Write(responseBody)
+		common.ProcessResponseBody(ctx, w, responseBody, 0)
 	}
 }
 

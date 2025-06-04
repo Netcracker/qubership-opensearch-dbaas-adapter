@@ -75,8 +75,7 @@ func (bp BaseProvider) CreateUserHandler() func(w http.ResponseWriter, r *http.R
 		err := decoder.Decode(&userCreateRequest)
 		if err != nil {
 			logger.ErrorContext(ctx, "Failed to decode request in create database handler", slog.Any("error", err))
-			w.WriteHeader(http.StatusInternalServerError)
-			_, _ = w.Write([]byte(err.Error()))
+			common.ProcessResponseBody(ctx, w, []byte(err.Error()), http.StatusInternalServerError)
 			return
 		}
 		defer r.Body.Close()
@@ -84,19 +83,17 @@ func (bp BaseProvider) CreateUserHandler() func(w http.ResponseWriter, r *http.R
 		response, err := bp.ensureUser(username, userCreateRequest, ctx)
 		if err != nil {
 			logger.ErrorContext(ctx, "Failed to ensure user", slog.Any("error", err))
-			w.WriteHeader(http.StatusInternalServerError)
-			_, _ = w.Write([]byte(err.Error()))
+			common.ProcessResponseBody(ctx, w, []byte(err.Error()), http.StatusInternalServerError)
 			return
 		}
 		responseBody, err := json.Marshal(response)
 		if err != nil {
 			logger.ErrorContext(ctx, "Failed to marshal response to JSON", slog.Any("error", err))
-			w.WriteHeader(http.StatusInternalServerError)
-			_, _ = w.Write([]byte(err.Error()))
+			common.ProcessResponseBody(ctx, w, []byte(err.Error()), http.StatusInternalServerError)
 			return
 		}
-		w.WriteHeader(http.StatusCreated)
-		_, _ = w.Write(responseBody)
+
+		common.ProcessResponseBody(ctx, w, responseBody, http.StatusCreated)
 	}
 }
 
