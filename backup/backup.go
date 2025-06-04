@@ -112,7 +112,7 @@ type Curator struct {
 }
 
 var ErrBackupNotFound = errors.New("backup not found")
-var ErrInternalServer = errors.New("curator return internal server error")
+var ErrCuratorUnavailable = errors.New("curator return internal server error")
 
 type BackupProvider struct {
 	client     common.Client
@@ -201,9 +201,27 @@ func (bp BackupProvider) DeleteBackupHandler() func(w http.ResponseWriter, r *ht
 
 		response, err := bp.DeleteBackup(backupID, ctx)
 		if err != nil {
-			common.ProcessResponseBody(ctx, w, response, http.StatusInternalServerError)
+			logger.ErrorContext(ctx, "failed to delete backup", slog.String("error", err.Error()))
+			w.WriteHeader(http.StatusInternalServerError)
+			_, _ = w.Write([]byte(err.Error()))
+			return
 		}
-		common.ProcessResponseBody(ctx, w, []byte{}, 0)
+
+		body, err := io.ReadAll(response.Body)
+		if err != nil {
+			logger.ErrorContext(ctx, "failed to read from http response", slog.String("error", err.Error()))
+			w.WriteHeader(http.StatusInternalServerError)
+			_, _ = w.Write([]byte(err.Error()))
+		}
+
+		if response.StatusCode > 200 {
+			w.WriteHeader(response.StatusCode)
+			_, _ = w.Write(body)
+			return
+		}
+
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte{})
 	}
 }
 
@@ -254,11 +272,27 @@ func (bp BackupProvider) RestoreBackupHandler(repo string, basePath string) func
 		regenerateNames := r.URL.Query().Get("regenerateNames") == "true"
 		changedNameDb, err := bp.RestoreBackup(backupID, databases, repo, regenerateNames, ctx)
 		if err != nil {
-			logger.ErrorContext(ctx, "Failed to restore backup", slog.String("error", err.Error()))
-			common.ProcessResponseBody(ctx, w, []byte(err.Error()), http.StatusInternalServerError)
+			logMsg := "failed to restore backup, internal server error occur"
+			statusCode := http.StatusInternalServerError
+			if errors.Is(err, ErrBackupNotFound) {
+				logMsg = "failed to restore backup, the backup is not found"
+				statusCode = http.StatusNotFound
+			}
+			logger.ErrorContext(ctx, logMsg, slog.String("error", err.Error()))
+			common.ProcessResponseBody(ctx, w, []byte(err.Error()), statusCode)
 			return
 		}
-		response := bp.TrackRestore(backupID, ctx, changedNameDb)
+
+		response, err := bp.TrackRestore(backupID, ctx, changedNameDb)
+		if err != nil {
+			logger.ErrorContext(ctx, "restore backup is failed", slog.String("error", err.Error()))
+			w.WriteHeader(http.StatusInternalServerError)
+			_, err = w.Write([]byte(err.Error()))
+			if err != nil {
+				logger.ErrorContext(ctx, "failed to write bytes to the http body response")
+			}
+		}
+
 		if regenerateNames {
 			var indices []string
 			indices, err = bp.getActualIndices(backupID, repo, changedNameDb, ctx)
@@ -315,10 +349,22 @@ func (bp BackupProvider) RestorationBackupHandler(repo string, basePath string) 
 		}
 
 		changedNameDb, err, trackId := bp.ProcessRestorationRequest(backupID, req, ctx)
-		response := bp.TrackRestore(trackId, ctx, changedNameDb)
 		if err != nil {
-			logger.ErrorContext(ctx, "Failed to restore backup", slog.String("error", err.Error()))
+			logger.ErrorContext(ctx, "failed to process restoration", slog.String("error", err.Error()))
 			common.ProcessResponseBody(ctx, w, []byte(err.Error()), http.StatusInternalServerError)
+			return
+		}
+
+		response, err := bp.TrackRestore(trackId, ctx, changedNameDb)
+		if err != nil {
+			errStatusCode := http.StatusInternalServerError
+			logMsg := "an internal server error occurred while attempting to retrieve the recovery"
+			if errors.Is(err, ErrBackupNotFound) {
+				logMsg = "track restore not found"
+				errStatusCode = http.StatusNotFound
+			}
+			logger.ErrorContext(ctx, logMsg, slog.String("error", err.Error()))
+			common.ProcessResponseBody(ctx, w, []byte(err.Error()), errStatusCode)
 			return
 		}
 		responseBody, err := json.Marshal(response)
@@ -337,8 +383,19 @@ func (bp BackupProvider) TrackRestoreFromTrackIdHandler(fromRepo string) func(w 
 		logger.InfoContext(ctx, fmt.Sprintf("Request to track restore in '%s' in '%s' repository is received", r.URL.Path, fromRepo))
 		vars := mux.Vars(r)
 		backupID := vars["backupID"]
-		response := bp.TrackRestore(backupID, ctx, nil)
-		responseBody, err := json.Marshal(response)
+		response, err := bp.TrackRestore(backupID, ctx, nil)
+		if err != nil {
+			errStatusCode := http.StatusInternalServerError
+			logMsg := "an internal server error occurred while attempting to retrieve the recovery"
+			if errors.Is(err, ErrBackupNotFound) {
+				logMsg = "track restore not found"
+				errStatusCode = http.StatusNotFound
+			}
+			logger.ErrorContext(ctx, logMsg, slog.String("error", err.Error()))
+			w.WriteHeader(errStatusCode)
+		}
+		var responseBody []byte
+		responseBody, err = json.Marshal(response)
 		if err != nil {
 			logger.ErrorContext(ctx, "Failed to marshal response to JSON", slog.Any("error", err))
 			common.ProcessResponseBody(ctx, w, responseBody, http.StatusInternalServerError)
@@ -436,6 +493,7 @@ func (bp BackupProvider) DeleteBackup(backupID string, ctx context.Context) ([]b
 	request.Header.Set(common.RequestIdKey, common.GetCtxStringValue(ctx, common.RequestIdKey))
 	request.SetBasicAuth(bp.Curator.username, bp.Curator.password)
 	response, err := bp.Curator.client.Do(request)
+
 	if err != nil {
 		logger.ErrorContext(ctx, "failed to delete snapshot", slog.String("error", err.Error()))
 		return nil, err
@@ -455,7 +513,7 @@ func (bp BackupProvider) DeleteBackup(backupID string, ctx context.Context) ([]b
 	}
 
 	if response.StatusCode == http.StatusInternalServerError {
-		return nil, ErrInternalServer
+		return nil, ErrCuratorUnavailable
 	}
 
 	return all, nil
@@ -599,16 +657,17 @@ func (bp BackupProvider) ProcessRestorationRequest(backupId string, restorationR
 	return changedDbNames, err, trackId
 }
 
-func (bp BackupProvider) TrackRestore(trackId string, ctx context.Context, changedNameDb map[string]string) ActionTrack {
+func (bp BackupProvider) TrackRestore(trackId string, ctx context.Context, changedNameDb map[string]string) (ActionTrack, error) {
 	logger.InfoContext(ctx, fmt.Sprintf("Request to track '%s' restoration is received", trackId))
 	jobStatus, err := bp.getJobStatus(trackId, ctx)
 	if err != nil {
 		logger.ErrorContext(ctx, "Failed to find snapshot", slog.String("error", err.Error()))
-		return backupTrack(trackId, "FAIL")
+		return backupTrack(trackId, "FAIL"), err
 	}
 	logger.DebugContext(ctx, fmt.Sprintf("'%s' backup status is %s", trackId, jobStatus))
-	return restoreTrack(trackId, jobStatus, changedNameDb)
+	return restoreTrack(trackId, jobStatus, changedNameDb), nil
 }
+
 func (bp BackupProvider) checkPrefixUniqueness(prefix string, ctx context.Context) (bool, error) {
 	logger.InfoContext(ctx, "Checking user prefix uniqueness during restoration with renaming")
 	getUsersRequest := api.GetUsersRequest{}
@@ -632,9 +691,11 @@ func (bp BackupProvider) checkPrefixUniqueness(prefix string, ctx context.Contex
 		}
 		for element, user := range users {
 			if strings.HasPrefix(element, prefix) {
+				logger.ErrorContext(ctx, fmt.Sprintf("provided prefix already exists or a part of another prefix: %+v", prefix))
 				return false, fmt.Errorf("provided prefix already exists or a part of another prefix: %+v", prefix)
 			}
 			if user.Attributes[resourcePrefixAttributeName] != "" && strings.HasPrefix(user.Attributes[resourcePrefixAttributeName], prefix) {
+				logger.ErrorContext(ctx, fmt.Sprintf("provided prefix already exists or a part of another prefix: %+v", prefix))
 				return false, fmt.Errorf("provided prefix already exists or a part of another prefix: %+v", prefix)
 			}
 		}
@@ -699,7 +760,20 @@ func (bp BackupProvider) requestRestore(ctx context.Context, dbs []string, backu
 	if err != nil {
 		return err
 	}
-	defer response.Body.Close()
+	defer func(Body io.ReadCloser) {
+		err = Body.Close()
+		if err != nil {
+			logger.Error("failed to close http body", slog.String("error", err.Error()))
+		}
+	}(response.Body)
+
+	if response.StatusCode == 404 {
+		return ErrBackupNotFound
+	}
+
+	if response.StatusCode >= 500 {
+		return ErrCuratorUnavailable
+	}
 	logger.InfoContext(ctx, fmt.Sprintf("'%s' snapshot restoration is started: %s", backupId, response.Body))
 	return nil
 }
